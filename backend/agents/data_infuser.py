@@ -1,5 +1,9 @@
+from .infuser_schema import DataInfuserOutput
+from google.genai import types
+
 class DataInfuser:
     def __init__(self, model):
+        # We assume main.py passes client.aio.models for async operations
         self.model = model
 
     async def infuse_data(self, raw_narratives: str) -> DataInfuserOutput:
@@ -14,9 +18,14 @@ class DataInfuser:
         5. If a narrative is vague, you must choose the most fitting technical parameter (e.g., 'fast' becomes 'high' motion_intensity).
         """
         
-        # This call would use Gemini's 'response_mime_type': 'application/json'
-        # with the DataInfuserOutput schema provided above.
         response = await self.model.generate_content(
-            f"{system_instruction}\n\nInput Narratives: {raw_narratives}"
+            model='gemini-2.0-flash-001',
+            contents=f"Input Narratives:\n{raw_narratives}",
+            config=types.GenerateContentConfig(
+                system_instruction=system_instruction,
+                response_mime_type="application/json",
+                response_schema=DataInfuserOutput,
+                temperature=0.2,
+            )
         )
         return DataInfuserOutput.model_validate_json(response.text)

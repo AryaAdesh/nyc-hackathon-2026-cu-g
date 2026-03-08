@@ -1,55 +1,98 @@
-import asyncio
-import json
-import sys
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+import os
+from dotenv import load_dotenv
 
-# Import the Pydantic models and the endpoint functions directly from api.py
-from api import (
-    api_generate_concepts,
-    api_expand_concepts,
-    api_infuse_data,
-    ConceptRequest,
-    ExpandRequest,
-    InfuseRequest
+# Load environment variables
+load_dotenv()
+
+from agents.director import generate_concepts, AdConcept
+from agents.expander import expand_concepts
+from agents.data_infuser import DataInfuser
+from agents.infuser_schema import DataInfuserOutput
+from google import genai
+
+app = FastAPI(title="Cosmic Stage Ad Agency API")
+
+# Add CORS middleware for the frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Adjust this in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-async def main():
-    prompt = "A futuristic sci-fi city where humans and robots live in harmony, emphasizing scale, technology, and cinematic drama."
+class ConceptRequest(BaseModel):
+    prompt: str
+
+class ExpandRequest(BaseModel):
+    concepts: list[dict]
+
+class InfuseRequest(BaseModel):
+    raw_narrative: str
+
+@app.post("/api/generate-concepts")
+async def api_generate_concepts(req: ConceptRequest):
+    """
+    Takes user voice transcript, hits Gemini 1.5 Pro to generate exactly 3 concepts.
+    Returns the JSON array without generating images/videos.
+    """
+    concepts = generate_concepts(req.prompt)
+    return concepts
+
+@app.post("/api/expand-concepts")
+async def api_expand_concepts(req: ExpandRequest):
+    """
+    Takes 3 concepts and expands them into a raw narrative string.
+    """
+    raw_narrative = expand_concepts(req.concepts)
+    return {"raw_narrative": raw_narrative}
+
+@app.post("/api/infuse-data", response_model=DataInfuserOutput)
+async def api_infuse_data(req: InfuseRequest):
+    """
+    Takes the expanded raw narrative and infuses it into a strict JSON format 
+    ready for image and video generation APIs.
+    """
+    # Assuming GEMINI_API_KEY is set in environment
+    client = genai.Client()
+    infuser = DataInfuser(client.aio.models)
     
-    # You can pass a custom prompt via command line arguments
-    if len(sys.argv) > 1:
-        prompt = " ".join(sys.argv[1:])
+    # Needs to be awaited
+    result = await infuser.infuse_data(req.raw_narrative)
+    return result
+
+class GenerateMediaRequest(BaseModel):
+    infused_stories: list[dict]
+
+from services.nano_banana import generate_image
+from services.veo import generate_video
+
+@app.post("/api/generate-media")
+async def api_generate_media(req: GenerateMediaRequest):
+    """
+    Takes the properly infused stories (with Nano Banana and Veo prompts)
+    and sequentially calls the image and video generation APIs.
+    """
+    stories = req.infused_stories
     
-    print(f"========== STEP 1: GENERATE CONCEPTS ==========")
-    print(f"Prompt: '{prompt}'")
-    try:
-        # Call the async endpoint function directly
-        req1 = ConceptRequest(prompt=prompt)
-        concepts = await api_generate_concepts(req1)
-        print(f"Successfully generated {len(concepts)} concepts.\n")
-    except Exception as e:
-        print("Error generating concepts:", e)
-        return
+    for story in stories:
+        # We process sequentially to avoid aggressive rate limits
+        print(f"Generating media for: {story.get('title', 'Unknown Title')}")
         
-    print(f"========== STEP 2: EXPAND CONCEPTS ==========")
-    try:
-        req2 = ExpandRequest(concepts=concepts)
-        expand_res = await api_expand_concepts(req2)
-        raw_narrative = expand_res["raw_narrative"]
-        print(f"Successfully expanded concepts. Narrative length: {len(raw_narrative)} characters.\n")
-    except Exception as e:
-        print("Error expanding concepts:", e)
-        return
+        # 1. Generate Image
+        image_prompt = story.get("nano_banana_prompt", "")
+        if image_prompt:
+            story["imageUrl"] = await generate_image(image_prompt)
         
-    print(f"========== STEP 3: INFUSE DATA ==========")
-    try:
-        req3 = InfuseRequest(raw_narrative=raw_narrative)
-        infused_data = await api_infuse_data(req3)
-        print("Successfully infused data. Final Output:\n")
-        # Since infused_data is a Pydantic model (DataInfuserOutput), we can dump it to JSON
-        print(infused_data.model_dump_json(indent=2))
-    except Exception as e:
-        print("Error infusing data:", e)
-        return
+        # 2. Generate Video
+        video_prompt = story.get("veo_prompt", "")
+        if video_prompt:
+            story["videoUrl"] = await generate_video(video_prompt)
+            
+    return {"stories": stories}
 
 if __name__ == "__main__":
     asyncio.run(main())
