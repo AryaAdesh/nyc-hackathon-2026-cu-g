@@ -27,7 +27,7 @@ def generate_concepts(user_prompt: str) -> list[dict]:
             system_instruction=DIRECTOR_SYSTEM_PROMPT,
             response_mime_type="application/json",
             response_schema=list[AdConcept],
-            temperature=0.9,
+            temperature=0.7,
         )
     )
     
