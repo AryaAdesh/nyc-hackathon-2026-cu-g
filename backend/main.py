@@ -1,69 +1,55 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-import os
-from dotenv import load_dotenv
+import asyncio
+import json
+import sys
 
-# Load environment variables
-load_dotenv()
-
-from agents.director import generate_concepts, AdConcept
-from agents.expander import expand_concepts
-from agents.data_infuser import DataInfuser
-from agents.infuser_schema import DataInfuserOutput
-from google import genai
-
-app = FastAPI(title="Cosmic Stage Ad Agency API")
-
-# Add CORS middleware for the frontend
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Adjust this in production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+# Import the Pydantic models and the endpoint functions directly from api.py
+from api import (
+    api_generate_concepts,
+    api_expand_concepts,
+    api_infuse_data,
+    ConceptRequest,
+    ExpandRequest,
+    InfuseRequest
 )
 
-class ConceptRequest(BaseModel):
-    prompt: str
-
-class ExpandRequest(BaseModel):
-    concepts: list[dict]
-
-class InfuseRequest(BaseModel):
-    raw_narrative: str
-
-@app.post("/api/generate-concepts")
-async def api_generate_concepts(req: ConceptRequest):
-    """
-    Takes user voice transcript, hits Gemini 1.5 Pro to generate exactly 3 concepts.
-    Returns the JSON array without generating images/videos.
-    """
-    concepts = generate_concepts(req.prompt)
-    return concepts
-
-@app.post("/api/expand-concepts")
-async def api_expand_concepts(req: ExpandRequest):
-    """
-    Takes 3 concepts and expands them into a raw narrative string.
-    """
-    raw_narrative = expand_concepts(req.concepts)
-    return {"raw_narrative": raw_narrative}
-
-@app.post("/api/infuse-data", response_model=DataInfuserOutput)
-async def api_infuse_data(req: InfuseRequest):
-    """
-    Takes the expanded raw narrative and infuses it into a strict JSON format 
-    ready for image and video generation APIs.
-    """
-    # Assuming GEMINI_API_KEY is set in environment
-    client = genai.Client()
-    infuser = DataInfuser(client.models)
+async def main():
+    prompt = "A futuristic sci-fi city where humans and robots live in harmony, emphasizing scale, technology, and cinematic drama."
     
-    # Needs to be awaited
-    result = await infuser.infuse_data(req.raw_narrative)
-    return result
+    # You can pass a custom prompt via command line arguments
+    if len(sys.argv) > 1:
+        prompt = " ".join(sys.argv[1:])
+    
+    print(f"========== STEP 1: GENERATE CONCEPTS ==========")
+    print(f"Prompt: '{prompt}'")
+    try:
+        # Call the async endpoint function directly
+        req1 = ConceptRequest(prompt=prompt)
+        concepts = await api_generate_concepts(req1)
+        print(f"Successfully generated {len(concepts)} concepts.\n")
+    except Exception as e:
+        print("Error generating concepts:", e)
+        return
+        
+    print(f"========== STEP 2: EXPAND CONCEPTS ==========")
+    try:
+        req2 = ExpandRequest(concepts=concepts)
+        expand_res = await api_expand_concepts(req2)
+        raw_narrative = expand_res["raw_narrative"]
+        print(f"Successfully expanded concepts. Narrative length: {len(raw_narrative)} characters.\n")
+    except Exception as e:
+        print("Error expanding concepts:", e)
+        return
+        
+    print(f"========== STEP 3: INFUSE DATA ==========")
+    try:
+        req3 = InfuseRequest(raw_narrative=raw_narrative)
+        infused_data = await api_infuse_data(req3)
+        print("Successfully infused data. Final Output:\n")
+        # Since infused_data is a Pydantic model (DataInfuserOutput), we can dump it to JSON
+        print(infused_data.model_dump_json(indent=2))
+    except Exception as e:
+        print("Error infusing data:", e)
+        return
 
 if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    asyncio.run(main())
