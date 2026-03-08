@@ -58,11 +58,41 @@ async def api_infuse_data(req: InfuseRequest):
     """
     # Assuming GEMINI_API_KEY is set in environment
     client = genai.Client()
-    infuser = DataInfuser(client.models)
+    infuser = DataInfuser(client.aio.models)
     
     # Needs to be awaited
     result = await infuser.infuse_data(req.raw_narrative)
     return result
+
+class GenerateMediaRequest(BaseModel):
+    infused_stories: list[dict]
+
+from services.nano_banana import generate_image
+from services.veo import generate_video
+
+@app.post("/api/generate-media")
+async def api_generate_media(req: GenerateMediaRequest):
+    """
+    Takes the properly infused stories (with Nano Banana and Veo prompts)
+    and sequentially calls the image and video generation APIs.
+    """
+    stories = req.infused_stories
+    
+    for story in stories:
+        # We process sequentially to avoid aggressive rate limits
+        print(f"Generating media for: {story.get('title', 'Unknown Title')}")
+        
+        # 1. Generate Image
+        image_prompt = story.get("nano_banana_prompt", "")
+        if image_prompt:
+            story["imageUrl"] = await generate_image(image_prompt)
+        
+        # 2. Generate Video
+        video_prompt = story.get("veo_prompt", "")
+        if video_prompt:
+            story["videoUrl"] = await generate_video(video_prompt)
+            
+    return {"stories": stories}
 
 if __name__ == "__main__":
     import uvicorn

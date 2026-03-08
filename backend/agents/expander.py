@@ -1,4 +1,5 @@
 from google import genai
+from google.genai import types
 import json
 
 def expand_concepts(concepts: list[dict]) -> str:
@@ -24,9 +25,9 @@ Format your output as a continuous plain text narrative without markdown formatt
     
     try:
         response = client.models.generate_content(
-            model='gemini-1.5-pro',
+            model='gemini-2.0-flash-001',
             contents=user_prompt,
-            config=genai.types.GenerateContentConfig(
+            config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
                 temperature=0.7,
             )
